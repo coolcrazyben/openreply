@@ -468,5 +468,12 @@
   "{name} Campaign Report": "Отчёт по кампании «{name}»",
   "{type} post": "Пост {type}",
   "”": "»",
-  "← Campaigns": "← Кампании"
+  "← Campaigns": "← Кампании",
+  "let them reply with their email to subscribe": "разрешить подписку, ответив своим email",
+  "Added to the end of the link DM": "Добавляется в конец сообщения со ссылкой",
+  "Reply once they're subscribed": "Ответ после подписки",
+  "Reply when there's no email in their message (sent once)": "Ответ, если в сообщении нет email (отправляется один раз)",
+  "Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.": "Адреса подписываются на вашу рассылку beehiiv, которая отправляет приветственное письмо. Воркеру нужны BEEHIIV_API_KEY и BEEHIIV_PUBLICATION_ID. Учитываются только ответы в течение 24 часов после сообщения этой кампании.",
+  "Email capture in the DM": "Сбор email в личных сообщениях",
+  "People can reply with their email to subscribe to your newsletter.": "Люди могут ответить своим email, чтобы подписаться на рассылку."
 }

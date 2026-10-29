@@ -468,5 +468,12 @@
   "{name} Campaign Report": "Relatório da campanha {name}",
   "{type} post": "Publicação {type}",
   "”": "”",
-  "← Campaigns": "← Campanhas"
+  "← Campaigns": "← Campanhas",
+  "let them reply with their email to subscribe": "deixar que respondam com o e-mail para se inscrever",
+  "Added to the end of the link DM": "Adicionado ao final da DM com o link",
+  "Reply once they're subscribed": "Resposta quando a inscrição for concluída",
+  "Reply when there's no email in their message (sent once)": "Resposta quando a mensagem não tem e-mail (enviada uma vez)",
+  "Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.": "Os e-mails são inscritos na sua newsletter do beehiiv, que envia o e-mail de boas-vindas. O worker precisa de BEEHIIV_API_KEY e BEEHIIV_PUBLICATION_ID. Só contam respostas em até 24 horas após a DM desta campanha.",
+  "Email capture in the DM": "Captura de e-mail na DM",
+  "People can reply with their email to subscribe to your newsletter.": "As pessoas podem responder com o e-mail para assinar sua newsletter."
 }
