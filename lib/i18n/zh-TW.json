@@ -468,5 +468,12 @@
   "{name} Campaign Report": "{name} 活動報表",
   "{type} post": "{type} 貼文",
   "”": "」",
-  "← Campaigns": "← 返回活動列表"
+  "← Campaigns": "← 返回活動列表",
+  "let them reply with their email to subscribe": "讓他們回覆電子郵件即可訂閱",
+  "Added to the end of the link DM": "加在連結私訊的結尾",
+  "Reply once they're subscribed": "訂閱成功後的回覆",
+  "Reply when there's no email in their message (sent once)": "訊息中沒有電子郵件時的回覆（只傳一次）",
+  "Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.": "電子郵件會訂閱到你的 beehiiv 電子報，並由它寄出歡迎信。worker 需要設定 BEEHIIV_API_KEY 與 BEEHIIV_PUBLICATION_ID。只有在此活動私訊後 24 小時內的回覆才會計入。",
+  "Email capture in the DM": "在私訊中收集電子郵件",
+  "People can reply with their email to subscribe to your newsletter.": "使用者可以回覆電子郵件來訂閱你的電子報。"
 }

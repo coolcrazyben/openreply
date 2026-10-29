@@ -35,6 +35,7 @@ interface Campaign {
   followUpEnabled: boolean;
   followUpMessage: string | null;
   followUpDelayMinutes: number | null;
+  emailCaptureEnabled?: boolean;
   publicReplyEnabled: boolean;
   publicReplyMessage: string | null;
   publicReplyMessages: string[];
@@ -288,6 +289,14 @@ export default function CampaignDetailPage() {
               {campaign.followUpDelayMinutes && campaign.followUpDelayMinutes > 0
                 ? t("Sent {minutes} min after the link.", { minutes: campaign.followUpDelayMinutes })
                 : t("Sent right after the link.")}
+            </p>
+          </Summary>
+        )}
+
+        {campaign.emailCaptureEnabled && (
+          <Summary title={t("Email capture in the DM")}>
+            <p className="text-xs text-muted">
+              {t("People can reply with their email to subscribe to your newsletter.")}
             </p>
           </Summary>
         )}

@@ -53,6 +53,17 @@ import {
 } from "@/lib/tracking/message";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
 import { hashRecipientId } from "@/lib/tracking/server";
+import {
+  DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE,
+  DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE,
+  EMAIL_CAPTURE_FAILURE_MESSAGE,
+  extractEmail,
+  maskEmail,
+  maskEmailsInText,
+  messagingWindowStart,
+  withEmailCapturePrompt,
+} from "@/lib/automation/email-capture";
+import { subscribeToBeehiiv } from "@/lib/beehiiv/client";
 
 import { ZernioApiError } from "@/lib/zernio/client";
 
@@ -289,7 +300,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   } = job.data;
   const requeueAttempt = job.data.requeueAttempt ?? 0;
 
-  const automations = await prisma.automation.findMany({
+  const automations = (await prisma.automation.findMany({
     where: {
       ...connectionScope(job.data),
       // Match campaigns bound to this specific post, plus any-post campaigns.
@@ -319,7 +330,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       },
     },
     orderBy: { createdAt: "asc" },
-  });
+  })).map(withEmailCapturePrompt);
 
   for (const automation of automations) {
     // "Any word" campaigns fire on every comment; otherwise require a keyword hit.
@@ -810,13 +821,7 @@ async function sendPostbackOnce({
   try {
     await prisma.postbackDelivery.create({ data: { id: operationId } });
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    )
-      return false;
+    if (isUniqueViolation(error)) return false;
     throw error;
   }
   try {
@@ -898,7 +903,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     .split(":");
   const fromOpeningDm = marker === "open";
 
-  const automation = await prisma.automation.findFirst({
+  const found = await prisma.automation.findFirst({
     where: { id: automationId, isActive: true, ...connectionScope(job.data) },
     include: {
       instagramAccount: true,
@@ -909,6 +914,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       },
     },
   });
+  const automation = found && withEmailCapturePrompt(found);
 
   if (
     !automation ||
@@ -1269,6 +1275,305 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
   }
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
+function captureOperationId(parts: string[]): string {
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+/**
+ * Subscribe a captured email to beehiiv at most once, whatever the number of
+ * webhook replays or repeat messages. The durable claim is released when the
+ * API call fails, so a later attempt can try again. Returns false when the
+ * email was already claimed.
+ */
+async function subscribeCapturedEmailOnce({
+  email,
+  utmCampaign,
+}: {
+  email: string;
+  utmCampaign: string;
+}): Promise<boolean> {
+  const claimId = captureOperationId([
+    "beehiiv",
+    process.env.BEEHIIV_PUBLICATION_ID?.trim() ?? "",
+    email,
+  ]);
+  try {
+    await prisma.postbackDelivery.create({ data: { id: claimId } });
+  } catch (error) {
+    if (isUniqueViolation(error)) return false;
+    throw error;
+  }
+  try {
+    await subscribeToBeehiiv({ email, utmCampaign });
+    return true;
+  } catch (error) {
+    await prisma.postbackDelivery
+      .delete({ where: { id: claimId } })
+      .catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Email capture: someone an email-capture campaign messaged in the last 24
+ * hours replies with their email, which is subscribed to the newsletter. A
+ * reply without an email gets one nudge per person, then silence. Returns the
+ * campaigns that consumed this message.
+ *
+ * Emails are only ever logged masked.
+ */
+async function processEmailCapture(
+  job: Job<ProcessMessageJob>
+): Promise<Set<string>> {
+  const { instagramAccountId, messageId, messageText, senderId } = job.data;
+  const handled = new Set<string>();
+
+  const automations = await prisma.automation.findMany({
+    where: {
+      ...connectionScope(job.data),
+      emailCaptureEnabled: true,
+      isActive: true,
+      instagramAccount: { instagramId: instagramAccountId },
+    },
+    include: {
+      instagramAccount: true,
+      trackedLinks: {
+        select: { slug: true, label: true, destinationUrl: true },
+        orderBy: TRACKED_LINK_ORDER,
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const email = extractEmail(messageText);
+
+  for (const automation of automations) {
+    if (!automation.emailCaptureEnabled) continue;
+
+    const recent = await prisma.dmLog.findFirst({
+      where: {
+        automationId: automation.id,
+        commenterId: senderId,
+        status: "SENT",
+        dmSentAt: { gte: messagingWindowStart() },
+      },
+      select: { commenterName: true },
+      orderBy: { dmSentAt: "desc" },
+    });
+    if (!recent) continue;
+
+    // No email: a keyword DM is still the keyword trigger's to answer.
+    if (
+      !email &&
+      automation.dmTriggerEnabled &&
+      (automation.matchAnyWord ||
+        matchKeywords(
+          messageText,
+          automation.keywords,
+          automation.wholeWordMatch
+        ).matched)
+    ) {
+      continue;
+    }
+    handled.add(automation.id);
+
+    const dedupeId = `email:${messageId}`;
+    const existingLog = await prisma.dmLog.findUnique({
+      where: {
+        automationId_commentId: {
+          automationId: automation.id,
+          commentId: dedupeId,
+        },
+      },
+    });
+    if (existingLog?.status === "SENT" || existingLog?.dmDeliveryUnconfirmed) {
+      continue;
+    }
+
+    const commenterName = recent.commenterName;
+    const logBase = {
+      workspaceId: automation.workspaceId,
+      automationId: automation.id,
+      instagramAccountId: automation.instagramAccountId,
+      commenterId: senderId,
+      commenterName,
+      commentText: maskEmailsInText(messageText),
+      commentId: dedupeId,
+    };
+    // `delivered`: our reply reached them, even when the subscribe failed.
+    const writeLog = ({
+      delivered = false,
+      ...data
+    }: {
+      status: "SENT" | "FAILED";
+      errorMessage: string | null;
+      dmDeliveryUnconfirmed?: boolean;
+      delivered?: boolean;
+    }) => {
+      const fields = { ...data, ...(delivered ? { dmSentAt: new Date() } : {}) };
+      return prisma.dmLog.upsert({
+        where: {
+          automationId_commentId: {
+            automationId: automation.id,
+            commentId: dedupeId,
+          },
+        },
+        create: { ...logBase, ...fields },
+        update: fields,
+      });
+    };
+
+    if (!hasInstagramCredentials(automation.instagramAccount)) {
+      await writeLog({
+        status: "FAILED",
+        errorMessage: "No Instagram access token available",
+      });
+      continue;
+    }
+
+    let accessToken: InstagramContext;
+    try {
+      accessToken = await createInstagramContext(
+        automation.instagramAccount,
+        `${job.id}:${automation.id}:email`
+      );
+    } catch {
+      await writeLog({
+        status: "FAILED",
+        errorMessage: "Failed to decrypt Instagram access token",
+      });
+      continue;
+    }
+
+    const send = (message: string) => () =>
+      sendDirectMessage({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId: senderId,
+        message,
+      });
+
+    if (!email) {
+      // One nudge per person per campaign, so a "thanks!" never gets nagged.
+      try {
+        const sent = await sendPostbackOnce({
+          operationId: captureOperationId([
+            "email-invalid",
+            automation.id,
+            senderId,
+          ]),
+          send: send(
+            renderMessageWithoutLink({
+              message:
+                automation.emailCaptureInvalidMessage?.trim() ||
+                DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE,
+              commenterName,
+            })
+          ),
+        });
+        if (sent) {
+          await writeLog({ status: "SENT", errorMessage: null, delivered: true });
+        }
+      } catch (error) {
+        console.log(
+          "[DM Worker] Failed to send email-capture nudge:",
+          formatError(error)
+        );
+      }
+      continue;
+    }
+
+    const maskedEmail = maskEmail(email);
+    let subscribeError: unknown = null;
+    let newlySubscribed = false;
+    try {
+      newlySubscribed = await subscribeCapturedEmailOnce({
+        email,
+        utmCampaign:
+          automation.keywords[0]?.trim().toLowerCase() || automation.id,
+      });
+    } catch (error) {
+      subscribeError = error;
+    }
+
+    await prisma.operationalEvent
+      .create({
+        data: {
+          workspaceId: automation.workspaceId,
+          source: "WORKER",
+          level: subscribeError ? "WARNING" : "INFO",
+          message: subscribeError
+            ? "Email capture: newsletter subscribe failed"
+            : "Email capture: subscribed to newsletter",
+          payload: {
+            automationId: automation.id,
+            automationName: automation.name,
+            userId: senderId,
+            email: maskedEmail,
+            alreadySubscribed: !subscribeError && !newlySubscribed,
+            error: subscribeError ? formatError(subscribeError) : null,
+          },
+        },
+      })
+      .catch(() => {});
+
+    // On failure, hand over the signup link so they still get the data.
+    const primaryLink = automation.trackedLinks[0];
+    const reply = subscribeError
+      ? primaryLink
+        ? `${EMAIL_CAPTURE_FAILURE_MESSAGE} ${buildTrackedUrl(
+            primaryLink.slug,
+            undefined,
+            hashRecipientId(senderId)
+          )}`
+        : EMAIL_CAPTURE_FAILURE_MESSAGE.replace(/:$/, ".")
+      : renderMessageWithoutLink({
+          message:
+            automation.emailCaptureSuccessMessage?.trim() ||
+            DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE,
+          commenterName,
+        });
+
+    try {
+      await sendPostbackOnce({
+        operationId: captureOperationId([
+          "email-reply",
+          automation.id,
+          messageId,
+        ]),
+        send: send(reply),
+      });
+      await writeLog(
+        subscribeError
+          ? {
+              status: "FAILED",
+              errorMessage: `beehiiv: ${formatError(subscribeError)} (sent signup link instead)`,
+              delivered: true,
+            }
+          : { status: "SENT", errorMessage: null, delivered: true }
+      );
+    } catch (error) {
+      await writeLog({
+        status: "FAILED",
+        errorMessage: formatError(error),
+        dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
+      });
+      throw error;
+    }
+  }
+
+  return handled;
+}
+
 /**
  * Reply to an inbound DM whose text matches a campaign's keywords.
  *
@@ -1280,7 +1585,11 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const { instagramAccountId, messageId, messageText, senderId } = job.data;
 
-  const automations = await prisma.automation.findMany({
+  // A reply to an email-capture campaign is answered by that campaign alone,
+  // so the same message never also fires its keyword trigger.
+  const captured = await processEmailCapture(job);
+
+  const automations = (await prisma.automation.findMany({
     where: {
       ...connectionScope(job.data),
       dmTriggerEnabled: true,
@@ -1296,11 +1605,12 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       },
     },
     orderBy: { createdAt: "asc" },
-  });
+  })).map(withEmailCapturePrompt);
 
   const dedupeId = `dm:${messageId}`;
 
   for (const automation of automations) {
+    if (captured.has(automation.id)) continue;
     const matchResult = automation.matchAnyWord
       ? { matched: true, matchedKeyword: null }
       : matchKeywords(

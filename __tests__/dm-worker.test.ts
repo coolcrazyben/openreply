@@ -16,6 +16,7 @@ const {
   mockQueueAdd,
   mockReserveWorkspaceDMSend,
   mockReleaseWorkspaceDMReservation,
+  mockSubscribeToBeehiiv,
 } = vi.hoisted(() => ({
   mockPrisma: {
     zernioConnection: { findUnique: vi.fn() },
@@ -53,6 +54,11 @@ const {
   mockQueueAdd: vi.fn(),
   mockReserveWorkspaceDMSend: vi.fn(),
   mockReleaseWorkspaceDMReservation: vi.fn(),
+  mockSubscribeToBeehiiv: vi.fn(),
+}));
+
+vi.mock("@/lib/beehiiv/client", () => ({
+  subscribeToBeehiiv: mockSubscribeToBeehiiv,
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -1763,4 +1769,284 @@ it("retains the public reply claim if sending succeeded but its log write failed
   await process({ ...createMockJob(), id: "next-poll" });
   expect(sendCommentReply).toHaveBeenCalledTimes(1);
   expect(mockSendPrivateReply).toHaveBeenCalledTimes(1);
+});
+
+describe("DM Worker — email capture", () => {
+  const captureAutomation = {
+    ...mockAutomation,
+    name: "LEDGER",
+    keywords: ["LEDGER"],
+    dmTriggerEnabled: true,
+    requireFollow: false,
+    emailCaptureEnabled: true,
+    emailCapturePrompt: null,
+    emailCaptureSuccessMessage: "You're in, {username} ✅",
+    emailCaptureInvalidMessage: null,
+    trackedLinks: [
+      { slug: "ledger1", label: "Primary campaign link", destinationUrl: "https://example.com/subscribe" },
+    ],
+  };
+
+  function messageJob(messageText: string, messageId = "mid_email") {
+    return {
+      name: "process-message",
+      data: {
+        instagramAccountId: "ig_456",
+        messageId,
+        messageText,
+        senderId: "commenter_999",
+      },
+      id: `message_job_${messageId}`,
+      attemptsMade: 0,
+    };
+  }
+
+  // Capture campaigns come from the email-capture query; the keyword-trigger
+  // query sees no campaigns unless a test says otherwise.
+  function useCampaigns(capture: unknown[], keyword: unknown[] = []) {
+    mockPrisma.automation.findMany.mockImplementation(
+      async (args: { where?: { emailCaptureEnabled?: boolean } }) =>
+        args.where?.emailCaptureEnabled ? capture : keyword
+    );
+  }
+
+  // Whether this campaign DMed the sender within the last 24 hours.
+  function messagedRecently(yes: boolean) {
+    mockPrisma.dmLog.findFirst.mockImplementation(
+      async (args: { where?: { status?: string; dmSentAt?: { gte?: Date } } } = {}) => {
+        if (args.where?.dmSentAt) return yes ? { commenterName: "commenter_user" } : null;
+        // Same as the suite default: no cross-campaign SENT row, name lookup hits.
+        return args.where?.status === "SENT" ? null : { commenterName: "commenter_user" };
+      }
+    );
+  }
+
+  beforeEach(() => {
+    useCampaigns([captureAutomation]);
+    messagedRecently(true);
+    mockSubscribeToBeehiiv.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("subscribes the email and confirms in the DM", async () => {
+    await getProcessor()(messageJob("sure! Pete@Gmail.com"));
+
+    expect(mockSubscribeToBeehiiv).toHaveBeenCalledWith({
+      email: "pete@gmail.com",
+      utmCampaign: "ledger",
+    });
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage).toHaveBeenCalledWith(
+      "decrypted_token",
+      "ig_456",
+      "commenter_999",
+      "You're in, commenter_user ✅"
+    );
+  });
+
+  it("only looks back over the 24-hour messaging window", async () => {
+    const before = Date.now();
+    await getProcessor()(messageJob("pete@gmail.com"));
+
+    const where = mockPrisma.dmLog.findFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      automationId: "auto_789",
+      commenterId: "commenter_999",
+      status: "SENT",
+    });
+    const windowMs = before - where.dmSentAt.gte.getTime();
+    expect(windowMs).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 - 1000);
+    expect(windowMs).toBeLessThanOrEqual(24 * 60 * 60 * 1000 + 1000);
+  });
+
+  it("never logs the full email", async () => {
+    await getProcessor()(messageJob("sure! Pete@Gmail.com"));
+
+    const logged = JSON.stringify([
+      mockPrisma.dmLog.upsert.mock.calls,
+      mockPrisma.operationalEvent.create.mock.calls,
+    ]);
+    expect(logged).not.toMatch(/pete@gmail\.com/i);
+    expect(logged).toContain("p***@gmail.com");
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          automationId_commentId: { automationId: "auto_789", commentId: "email:mid_email" },
+        },
+        create: expect.objectContaining({
+          commentText: "sure! p***@gmail.com",
+          status: "SENT",
+        }),
+      })
+    );
+    expect(mockPrisma.operationalEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          level: "INFO",
+          payload: expect.objectContaining({ email: "p***@gmail.com" }),
+        }),
+      })
+    );
+  });
+
+  it("does not fire the keyword trigger for the same message", async () => {
+    useCampaigns([captureAutomation], [captureAutomation]);
+    await getProcessor()(messageJob("LEDGER pete@gmail.com"));
+
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+  });
+
+  it("does not subscribe twice when the email was already claimed", async () => {
+    // The durable claim for this email already exists (webhook replay, or the
+    // same address sent again): beehiiv is not called again.
+    mockPrisma.postbackDelivery.create.mockImplementation(async () => {
+      throw Object.assign(new Error("Unique constraint"), { code: "P2002" });
+    });
+
+    await getProcessor()(messageJob("pete@gmail.com"));
+
+    expect(mockSubscribeToBeehiiv).not.toHaveBeenCalled();
+    // The reply claim is taken too, so a replay sends nothing at all.
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips a message it already answered", async () => {
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "SENT" });
+
+    await getProcessor()(messageJob("pete@gmail.com"));
+
+    expect(mockSubscribeToBeehiiv).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("claims the subscription and the reply with stable ids", async () => {
+    await getProcessor()(messageJob("pete@gmail.com"));
+    const firstIds = mockPrisma.postbackDelivery.create.mock.calls.map(
+      (call) => call[0].data.id
+    );
+    mockPrisma.postbackDelivery.create.mockClear();
+
+    await getProcessor()(messageJob("PETE@gmail.com "));
+    const replayIds = mockPrisma.postbackDelivery.create.mock.calls.map(
+      (call) => call[0].data.id
+    );
+
+    expect(firstIds).toHaveLength(2);
+    expect(replayIds).toEqual(firstIds);
+  });
+
+  it("sends the signup link and releases the claim when beehiiv fails", async () => {
+    mockSubscribeToBeehiiv.mockRejectedValue(
+      new Error("beehiiv request failed (HTTP 500)")
+    );
+
+    await getProcessor()(messageJob("pete@gmail.com"));
+
+    expect(mockPrisma.postbackDelivery.delete).toHaveBeenCalledTimes(1);
+    const reply = mockSendDirectMessage.mock.calls[0][3] as string;
+    expect(reply).toContain("couldn't sign you up");
+    expect(reply).toContain("/r/ledger1");
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          status: "FAILED",
+          errorMessage: expect.stringContaining("HTTP 500"),
+        }),
+      })
+    );
+    expect(mockPrisma.operationalEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ level: "WARNING" }),
+      })
+    );
+  });
+
+  it("nudges once when a reply has no email", async () => {
+    mockMatchKeywords.mockReturnValue({ matched: false, matchedKeyword: null });
+
+    await getProcessor()(messageJob("thanks!!"));
+
+    expect(mockSubscribeToBeehiiv).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage.mock.calls[0][3]).toContain(
+      "couldn't find an email"
+    );
+
+    // The nudge is claimed per person, so the next message gets nothing.
+    mockSendDirectMessage.mockClear();
+    mockPrisma.postbackDelivery.create.mockImplementation(async () => {
+      throw Object.assign(new Error("Unique constraint"), { code: "P2002" });
+    });
+    await getProcessor()(messageJob("ok cool", "mid_second"));
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a keyword DM without an email to the keyword trigger", async () => {
+    useCampaigns([captureAutomation], [captureAutomation]);
+
+    await getProcessor()(messageJob("LEDGER"));
+
+    expect(mockSubscribeToBeehiiv).not.toHaveBeenCalled();
+    // The reveal went out with the capture prompt appended.
+    expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessageWithLinkButton.mock.calls[0][3]).toContain(
+      "reply with your email"
+    );
+  });
+
+  it("ignores emails from people the campaign has not messaged in 24 hours", async () => {
+    messagedRecently(false);
+
+    await getProcessor()(messageJob("pete@gmail.com"));
+
+    expect(mockSubscribeToBeehiiv).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("appends the capture prompt to the link DM sent from a comment", async () => {
+    useCampaigns([], []);
+    mockPrisma.automation.findMany.mockResolvedValue([
+      { ...captureAutomation, trackedLinks: [] },
+    ]);
+
+    await getProcessor()(createMockJob());
+
+    expect(mockSendPrivateReply.mock.calls[0][3]).toMatch(
+      /Here is the link: https:\/\/example\.com\n\nOr just reply with your email/
+    );
+  });
+
+  it("subscribes and replies through Zernio for Zernio accounts", async () => {
+    mockPrisma.zernioConnection.findUnique.mockResolvedValue({
+      apiKey: "encrypted_key",
+    });
+    useCampaigns([
+      {
+        ...captureAutomation,
+        instagramAccount: {
+          ...captureAutomation.instagramAccount,
+          provider: "ZERNIO",
+          workspaceId: "workspace_123",
+          zernioAccountId: "zernio_selected",
+          accessToken: "",
+        },
+      },
+    ]);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ messageId: "sent" })));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await getProcessor()(messageJob("pete@gmail.com"));
+
+      expect(mockSubscribeToBeehiiv).toHaveBeenCalledTimes(1);
+      expect(mockSendDirectMessage).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.accountId).toBe("zernio_selected");
+      expect(JSON.stringify(body)).toContain("You're in, commenter_user");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
