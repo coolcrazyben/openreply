@@ -1182,7 +1182,7 @@ describe("DM Worker — DM keyword trigger", () => {
 });
 
 describe("Zernio worker routing", () => {
-  it("fails open on unknown follow status and sends once through the selected provider", async () => {
+  it("prompts instead of sending the link when follow status is unknown, through the selected provider", async () => {
     mockPrisma.zernioConnection.findUnique.mockResolvedValue({
       apiKey: "encrypted_key",
     });
@@ -1219,9 +1219,13 @@ describe("Zernio worker routing", () => {
       expect(fetchMock.mock.calls[1][0]).toContain(
         "/inbox/comments/media_101/comment_555/private-reply"
       );
-      expect(JSON.parse(fetchMock.mock.calls[1][1].body).accountId).toBe(
-        "zernio_selected"
-      );
+      const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(body.accountId).toBe("zernio_selected");
+      // A first-time commenter can't be verified yet, so they get the follow
+      // prompt (with the re-check button), not the link.
+      expect(body.buttons).toEqual([
+        expect.objectContaining({ type: "postback", payload: "followcheck:auto_789" }),
+      ]);
       expect(mockSendPrivateReply).not.toHaveBeenCalled();
       expect(mockSendPrivateReplyWithButton).not.toHaveBeenCalled();
       expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(

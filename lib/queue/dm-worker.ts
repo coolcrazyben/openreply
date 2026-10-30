@@ -637,16 +637,18 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     // (opening DM → follow gate → link). Without an opening DM, we check follow
     // status at comment time: confirmed followers get the link now, everyone
     // else gets the "follow me first" prompt (re-verified on tap).
+    //
+    // `null` (unverifiable) prompts on every provider. A commenter who has never
+    // messaged the account can't be looked up yet (Meta and Zernio both answer
+    // "consent required"), so treating `null` as a follow handed the link to
+    // every first-time commenter and the gate never fired.
     let sendFollowPrompt = false;
     if (automation.requireFollow && !useOpeningDm) {
       const alreadyFollows = await getUserFollowStatus({
         context: accessToken,
         recipientId: commenterId,
       });
-      sendFollowPrompt =
-        accessToken.provider === "ZERNIO"
-          ? alreadyFollows === false
-          : alreadyFollows !== true;
+      sendFollowPrompt = alreadyFollows !== true;
     }
 
     let claimed;
@@ -980,6 +982,26 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     // "User consent is required", i.e. null), so failing open here handed the
     // link to anyone who read the opening DM and waited, follower or not.
     if (fallback && follows !== true) return;
+    if (follows === null) {
+      // The tap goes through (fail-open), but leave a trace: if Instagram can't
+      // verify follows even after a tap, the gate is leaking and this shows it.
+      await prisma.operationalEvent
+        .create({
+          data: {
+            workspaceId: automation.workspaceId,
+            source: "WORKER",
+            level: "WARNING",
+            message: "Follow gate could not verify a button tap; link sent",
+            payload: {
+              automationId: automation.id,
+              automationName: automation.name,
+              provider: accessToken.provider,
+              userId,
+            },
+          },
+        })
+        .catch(() => {});
+    }
     if (follows === false) {
       if (fallback) return;
 
@@ -1409,10 +1431,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         context: accessToken,
         recipientId: senderId,
       });
-      sendFollowPrompt =
-        accessToken.provider === "ZERNIO"
-          ? follows === false
-          : follows !== true;
+      sendFollowPrompt = follows !== true;
     }
 
     const usage = await reserveWorkspaceDMSend(automation.workspaceId);
