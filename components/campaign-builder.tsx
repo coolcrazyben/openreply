@@ -18,6 +18,12 @@ import { useRouter } from "next/navigation";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
+import {
+  DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE,
+  DEFAULT_EMAIL_CAPTURE_PROMPT,
+  DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE,
+  withEmailCapturePrompt,
+} from "@/lib/automation/email-capture";
 import { readCache, writeCache } from "@/lib/client-cache";
 import {
   IMPORT_QUEUE_KEY,
@@ -50,6 +56,10 @@ interface LoadedCampaign {
   followUpEnabled: boolean;
   followUpMessage: string | null;
   followUpDelayMinutes: number | null;
+  emailCaptureEnabled?: boolean;
+  emailCapturePrompt?: string | null;
+  emailCaptureSuccessMessage?: string | null;
+  emailCaptureInvalidMessage?: string | null;
   publicReplyEnabled: boolean;
   publicReplyMessage: string | null;
   publicReplyMessages: string[];
@@ -184,6 +194,12 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [followUpEnabled, setFollowUpEnabled] = useState(false);
   const [followUpMessage, setFollowUpMessage] = useState("");
   const [followUpDelayMinutes, setFollowUpDelayMinutes] = useState(0);
+  const [emailCaptureEnabled, setEmailCaptureEnabled] = useState(false);
+  const [emailCapturePrompt, setEmailCapturePrompt] = useState("");
+  const [emailCaptureSuccessMessage, setEmailCaptureSuccessMessage] =
+    useState("");
+  const [emailCaptureInvalidMessage, setEmailCaptureInvalidMessage] =
+    useState("");
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
@@ -293,6 +309,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setFollowUpEnabled(c.followUpEnabled ?? false);
         setFollowUpMessage(c.followUpMessage ?? "");
         setFollowUpDelayMinutes(c.followUpDelayMinutes ?? 0);
+        setEmailCaptureEnabled(c.emailCaptureEnabled ?? false);
+        setEmailCapturePrompt(c.emailCapturePrompt ?? "");
+        setEmailCaptureSuccessMessage(c.emailCaptureSuccessMessage ?? "");
+        setEmailCaptureInvalidMessage(c.emailCaptureInvalidMessage ?? "");
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -433,6 +453,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       followUpEnabled,
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
       followUpDelayMinutes: followUpEnabled ? followUpDelayMinutes : 0,
+      emailCaptureEnabled,
+      emailCapturePrompt: emailCaptureEnabled ? emailCapturePrompt.trim() : "",
+      emailCaptureSuccessMessage: emailCaptureEnabled
+        ? emailCaptureSuccessMessage.trim()
+        : "",
+      emailCaptureInvalidMessage: emailCaptureEnabled
+        ? emailCaptureInvalidMessage.trim()
+        : "",
       isActive: activeValue,
     };
 
@@ -991,6 +1019,57 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               </div>
             )}
           </div>
+          <div className="mt-3 rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-foreground">
+                {t("let them reply with their email to subscribe")}
+              </span>
+              <Toggle
+                on={emailCaptureEnabled}
+                onToggle={() => setEmailCaptureEnabled(!emailCaptureEnabled)}
+              />
+            </div>
+            {emailCaptureEnabled && (
+              <div className="mt-3 space-y-2">
+                <label className="block text-xs text-muted">
+                  {t("Added to the end of the link DM")}
+                </label>
+                <textarea
+                  value={emailCapturePrompt}
+                  onChange={(e) => setEmailCapturePrompt(e.target.value)}
+                  placeholder={DEFAULT_EMAIL_CAPTURE_PROMPT}
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
+                  maxLength={500}
+                />
+                <label className="block text-xs text-muted">
+                  {t("Reply once they're subscribed")}
+                </label>
+                <textarea
+                  value={emailCaptureSuccessMessage}
+                  onChange={(e) => setEmailCaptureSuccessMessage(e.target.value)}
+                  placeholder={DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE}
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
+                  maxLength={1000}
+                />
+                <label className="block text-xs text-muted">
+                  {t("Reply when there's no email in their message (sent once)")}
+                </label>
+                <textarea
+                  value={emailCaptureInvalidMessage}
+                  onChange={(e) => setEmailCaptureInvalidMessage(e.target.value)}
+                  placeholder={DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE}
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
+                  maxLength={1000}
+                />
+                <p className="text-xs text-muted">
+                  {t("Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.")}
+                </p>
+              </div>
+            )}
+          </div>
         </Section>
       </div>
 
@@ -1012,7 +1091,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             openingDmEnabled={openingDmEnabled}
             openingDmMessage={openingDmMessage}
             openingDmButtonLabel={openingDmButtonLabel}
-            revealMessage={dmMessage}
+            revealMessage={
+              withEmailCapturePrompt({
+                dmMessage,
+                emailCaptureEnabled,
+                emailCapturePrompt,
+              }).dmMessage
+            }
             hasLink={Boolean(trackedDestinationUrl.trim())}
             linkButtonLabel={linkButtonLabel || "Open link"}
             linkUrl={trackedDestinationUrl.trim() || undefined}

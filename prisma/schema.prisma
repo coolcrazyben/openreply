@@ -214,6 +214,13 @@ model Automation {
   // Minutes to wait after the link is delivered before sending the follow-up.
   // 0 sends it right away.
   followUpDelayMinutes Int @default(0)
+  // Let people reply to the campaign's DMs with their email address, which is
+  // then subscribed to the newsletter (beehiiv). Only replies from people this
+  // campaign messaged in the last 24 hours are treated as capture attempts.
+  emailCaptureEnabled        Boolean @default(false)
+  emailCapturePrompt         String?
+  emailCaptureSuccessMessage String?
+  emailCaptureInvalidMessage String?
   publicReplyEnabled Boolean @default(false)
   publicReplyMessage String?
   publicReplyMessages String[] @default([])
