@@ -475,5 +475,6 @@
   "Reply when there's no email in their message (sent once)": "Resposta quando a mensagem não tem e-mail (enviada uma vez)",
   "Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.": "Os e-mails são inscritos na sua newsletter do beehiiv, que envia o e-mail de boas-vindas. O worker precisa de BEEHIIV_API_KEY e BEEHIIV_PUBLICATION_ID. Só contam respostas em até 24 horas após a DM desta campanha.",
   "Email capture in the DM": "Captura de e-mail na DM",
-  "People can reply with their email to subscribe to your newsletter.": "As pessoas podem responder com o e-mail para assinar sua newsletter."
+  "People can reply with their email to subscribe to your newsletter.": "As pessoas podem responder com o e-mail para assinar sua newsletter.",
+  "Sent as the first DM, with no button. They type their email, then get the link.": "Enviada como a primeira DM, sem botão. A pessoa digita o email e depois recebe o link."
 }

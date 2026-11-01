@@ -57,6 +57,8 @@ import {
   DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE,
   DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE,
   EMAIL_CAPTURE_FAILURE_MESSAGE,
+  asksForEmailFirst,
+  emailFirstMessage,
   extractEmail,
   maskEmail,
   maskEmailsInText,
@@ -635,10 +637,16 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       }
     }
 
+    // Email first: the private reply asks for their email as plain text, with
+    // no button, and the link goes out once they reply with it (see
+    // processEmailCapture). It replaces the opening DM.
+    const emailFirst = asksForEmailFirst(automation);
+
     // With an opening DM, the private reply is a button message; tapping it
     // fires a postback that delivers the reveal (see processPostback). Without
     // one, we send the reveal text directly as today.
     const useOpeningDm =
+      !emailFirst &&
       automation.openingDmEnabled &&
       Boolean(automation.openingDmMessage) &&
       Boolean(automation.openingDmButtonLabel);
@@ -677,7 +685,18 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     }
     let delivered = false;
     try {
-      if (useOpeningDm) {
+      if (emailFirst) {
+        await sendPrivateReply({
+          context: accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          commentId: commentId,
+          message: renderMessageWithoutLink({
+            message: emailFirstMessage(automation),
+            commenterName,
+          }),
+          postId: mediaId,
+        });
+      } else if (useOpeningDm) {
         const openingText = renderMessageWithTracking({
           message: automation.openingDmMessage as string,
           commenterName,
@@ -1565,6 +1584,23 @@ async function processEmailCapture(
           commenterName,
         });
 
+    // An email-first campaign hasn't sent the link yet, so it comes with the
+    // confirmation, as one message.
+    const sendReply =
+      !subscribeError && asksForEmailFirst(automation)
+        ? () =>
+            sendRevealDirectMessage({
+              accessToken,
+              automation: {
+                ...automation,
+                dmMessage: `${reply}\n\n${automation.dmMessage}`,
+              },
+              userId: senderId,
+              commenterName,
+              context: "email capture",
+            })
+        : send(reply);
+
     try {
       await sendPostbackOnce({
         operationId: captureOperationId([
@@ -1572,7 +1608,7 @@ async function processEmailCapture(
           automation.id,
           messageId,
         ]),
-        send: send(reply),
+        send: sendReply,
       });
       await writeLog(
         subscribeError
@@ -1767,7 +1803,17 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
     }
 
     try {
-      if (sendFollowPrompt) {
+      if (asksForEmailFirst(automation)) {
+        await sendDirectMessage({
+          context: accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          userId: senderId,
+          message: renderMessageWithoutLink({
+            message: emailFirstMessage(automation),
+            commenterName,
+          }),
+        });
+      } else if (sendFollowPrompt) {
         const promptText = renderMessageWithoutLink({
           message:
             automation.followPromptMessage ||

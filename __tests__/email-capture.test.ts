@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_EMAIL_CAPTURE_PROMPT,
+  DEFAULT_EMAIL_FIRST_PROMPT,
+  asksForEmailFirst,
+  emailFirstMessage,
   extractEmail,
   isWithinMessagingWindow,
   maskEmail,
@@ -97,12 +100,13 @@ describe("withEmailCapturePrompt", () => {
     expect(withEmailCapturePrompt(automation)).toBe(automation);
   });
 
-  it("appends the custom prompt, or the default when blank", () => {
+  it("appends the custom prompt, or the default when blank, behind a follow gate", () => {
     expect(
       withEmailCapturePrompt({
         dmMessage: "Here you go",
         emailCaptureEnabled: true,
         emailCapturePrompt: "Or reply with your email",
+        requireFollow: true,
       }).dmMessage
     ).toBe("Here you go\n\nOr reply with your email");
     expect(
@@ -110,8 +114,36 @@ describe("withEmailCapturePrompt", () => {
         dmMessage: "Here you go",
         emailCaptureEnabled: true,
         emailCapturePrompt: "  ",
+        requireFollow: true,
       }).dmMessage
     ).toBe(`Here you go\n\n${DEFAULT_EMAIL_CAPTURE_PROMPT}`);
+  });
+
+  it("leaves the link DM alone when the email is asked for first", () => {
+    const automation = {
+      dmMessage: "Here you go",
+      emailCaptureEnabled: true,
+      emailCapturePrompt: "What's your email?",
+      requireFollow: false,
+    };
+    expect(withEmailCapturePrompt(automation)).toBe(automation);
+  });
+});
+
+describe("asksForEmailFirst", () => {
+  it("asks first unless capture is off or the campaign is follow-gated", () => {
+    expect(asksForEmailFirst({ emailCaptureEnabled: true })).toBe(true);
+    expect(
+      asksForEmailFirst({ emailCaptureEnabled: true, requireFollow: true })
+    ).toBe(false);
+    expect(asksForEmailFirst({ emailCaptureEnabled: false })).toBe(false);
+  });
+
+  it("uses the custom prompt, or the default when blank", () => {
+    expect(emailFirstMessage({ emailCapturePrompt: " Email? " })).toBe("Email?");
+    expect(emailFirstMessage({ emailCapturePrompt: "" })).toBe(
+      DEFAULT_EMAIL_FIRST_PROMPT
+    );
   });
 });
 

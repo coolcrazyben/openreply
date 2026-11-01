@@ -475,5 +475,6 @@
   "Reply when there's no email in their message (sent once)": "Ответ, если в сообщении нет email (отправляется один раз)",
   "Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.": "Адреса подписываются на вашу рассылку beehiiv, которая отправляет приветственное письмо. Воркеру нужны BEEHIIV_API_KEY и BEEHIIV_PUBLICATION_ID. Учитываются только ответы в течение 24 часов после сообщения этой кампании.",
   "Email capture in the DM": "Сбор email в личных сообщениях",
-  "People can reply with their email to subscribe to your newsletter.": "Люди могут ответить своим email, чтобы подписаться на рассылку."
+  "People can reply with their email to subscribe to your newsletter.": "Люди могут ответить своим email, чтобы подписаться на рассылку.",
+  "Sent as the first DM, with no button. They type their email, then get the link.": "Отправляется первым сообщением, без кнопки. Человек вводит свой email и затем получает ссылку."
 }

@@ -1831,14 +1831,28 @@ describe("DM Worker — email capture", () => {
     mockSubscribeToBeehiiv.mockReset().mockResolvedValue(undefined);
   });
 
-  it("subscribes the email and confirms in the DM", async () => {
+  it("subscribes the email and sends the link with the confirmation", async () => {
     await getProcessor()(messageJob("sure! Pete@Gmail.com"));
 
     expect(mockSubscribeToBeehiiv).toHaveBeenCalledWith({
       email: "pete@gmail.com",
       utmCampaign: "ledger",
     });
-    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledTimes(1);
+    const [, , userId, text, buttons] =
+      mockSendDirectMessageWithLinkButton.mock.calls[0];
+    expect(userId).toBe("commenter_999");
+    expect(text).toMatch(/^You're in, commenter_user ✅\n\nHey commenter_user! Here is the link/);
+    expect(JSON.stringify(buttons)).toContain("/r/ledger1");
+  });
+
+  it("only confirms when a follow-gated campaign already sent the link", async () => {
+    useCampaigns([{ ...captureAutomation, requireFollow: true }]);
+
+    await getProcessor()(messageJob("pete@gmail.com"));
+
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
     expect(mockSendDirectMessage).toHaveBeenCalledWith(
       "decrypted_token",
       "ig_456",
@@ -1896,8 +1910,9 @@ describe("DM Worker — email capture", () => {
     useCampaigns([captureAutomation], [captureAutomation]);
     await getProcessor()(messageJob("LEDGER pete@gmail.com"));
 
-    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
-    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    // One reply in all: the confirmation with the link, no second ask.
+    expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
   });
 
   it("does not subscribe twice when the email was already claimed", async () => {
@@ -1985,13 +2000,26 @@ describe("DM Worker — email capture", () => {
     expect(mockSendDirectMessage).not.toHaveBeenCalled();
   });
 
-  it("leaves a keyword DM without an email to the keyword trigger", async () => {
+  it("answers a keyword DM without an email by asking for it", async () => {
     useCampaigns([captureAutomation], [captureAutomation]);
 
     await getProcessor()(messageJob("LEDGER"));
 
     expect(mockSubscribeToBeehiiv).not.toHaveBeenCalled();
-    // The reveal went out with the capture prompt appended.
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage.mock.calls[0][3]).toBe(
+      "Hey commenter_user! Reply with your email and I'll send it straight to your inbox 📬"
+    );
+  });
+
+  it("keeps the link DM with the prompt appended on a follow-gated keyword DM", async () => {
+    const gated = { ...captureAutomation, requireFollow: true };
+    useCampaigns([gated], [gated]);
+
+    await getProcessor()(messageJob("LEDGER"));
+
     expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledTimes(1);
     expect(mockSendDirectMessageWithLinkButton.mock.calls[0][3]).toContain(
       "reply with your email"
@@ -2007,10 +2035,37 @@ describe("DM Worker — email capture", () => {
     expect(mockSendDirectMessage).not.toHaveBeenCalled();
   });
 
-  it("appends the capture prompt to the link DM sent from a comment", async () => {
+  it("asks for the email in a plain-text first DM, with no button", async () => {
     useCampaigns([], []);
     mockPrisma.automation.findMany.mockResolvedValue([
-      { ...captureAutomation, trackedLinks: [] },
+      {
+        ...captureAutomation,
+        openingDmEnabled: true,
+        openingDmMessage: "Tap below 👇",
+        openingDmButtonLabel: "Send it",
+        emailCapturePrompt: "Hey {username}, what's your email? 📬",
+      },
+    ]);
+
+    await getProcessor()(createMockJob());
+
+    expect(mockSendPrivateReplyWithButton).not.toHaveBeenCalled();
+    expect(mockSendPrivateReplyWithLinkButton).not.toHaveBeenCalled();
+    expect(mockSendPrivateReply).toHaveBeenCalledTimes(1);
+    expect(mockSendPrivateReply.mock.calls[0][3]).toBe(
+      "Hey commenter_user, what's your email? 📬"
+    );
+    expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "SENT" }),
+      })
+    );
+  });
+
+  it("appends the capture prompt to a follow-gated link DM sent from a comment", async () => {
+    useCampaigns([], []);
+    mockPrisma.automation.findMany.mockResolvedValue([
+      { ...captureAutomation, requireFollow: true, trackedLinks: [] },
     ]);
 
     await getProcessor()(createMockJob());
