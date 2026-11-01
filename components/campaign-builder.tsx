@@ -22,6 +22,8 @@ import {
   DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE,
   DEFAULT_EMAIL_CAPTURE_PROMPT,
   DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE,
+  DEFAULT_EMAIL_FIRST_PROMPT,
+  asksForEmailFirst,
   withEmailCapturePrompt,
 } from "@/lib/automation/email-capture";
 import { readCache, writeCache } from "@/lib/client-cache";
@@ -200,6 +202,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     useState("");
   const [emailCaptureInvalidMessage, setEmailCaptureInvalidMessage] =
     useState("");
+  const emailFirst = asksForEmailFirst({ emailCaptureEnabled, requireFollow });
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
@@ -1032,12 +1035,18 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             {emailCaptureEnabled && (
               <div className="mt-3 space-y-2">
                 <label className="block text-xs text-muted">
-                  {t("Added to the end of the link DM")}
+                  {requireFollow
+                    ? t("Added to the end of the link DM")
+                    : t("Sent as the first DM, with no button. They type their email, then get the link.")}
                 </label>
                 <textarea
                   value={emailCapturePrompt}
                   onChange={(e) => setEmailCapturePrompt(e.target.value)}
-                  placeholder={DEFAULT_EMAIL_CAPTURE_PROMPT}
+                  placeholder={
+                    requireFollow
+                      ? DEFAULT_EMAIL_CAPTURE_PROMPT
+                      : DEFAULT_EMAIL_FIRST_PROMPT
+                  }
                   rows={2}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
                   maxLength={500}
@@ -1092,11 +1101,19 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             openingDmMessage={openingDmMessage}
             openingDmButtonLabel={openingDmButtonLabel}
             revealMessage={
-              withEmailCapturePrompt({
-                dmMessage,
-                emailCaptureEnabled,
-                emailCapturePrompt,
-              }).dmMessage
+              emailFirst
+                ? `${emailCaptureSuccessMessage.trim() || DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE}\n\n${dmMessage}`
+                : withEmailCapturePrompt({
+                    dmMessage,
+                    emailCaptureEnabled,
+                    emailCapturePrompt,
+                    requireFollow,
+                  }).dmMessage
+            }
+            emailFirstMessage={
+              emailFirst
+                ? emailCapturePrompt.trim() || DEFAULT_EMAIL_FIRST_PROMPT
+                : undefined
             }
             hasLink={Boolean(trackedDestinationUrl.trim())}
             linkButtonLabel={linkButtonLabel || "Open link"}

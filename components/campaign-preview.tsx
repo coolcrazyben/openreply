@@ -43,6 +43,9 @@ interface CampaignPreviewProps {
   followUpEnabled: boolean;
   followUpMessage: string;
   followUpDelayMinutes?: number;
+  // Email first: this plain-text ask replaces the opening DM and the follow
+  // prompt, and the reveal follows the person's typed email.
+  emailFirstMessage?: string;
 }
 
 const SAMPLE_USER = "username";
@@ -328,6 +331,7 @@ function DmScreen({
   followUpDelayMinutes = 0,
   linkUrl,
   inboundMessage,
+  emailFirstMessage,
 }: {
   username: string;
   avatarUrl: string | null;
@@ -348,6 +352,7 @@ function DmScreen({
   followUpDelayMinutes?: number;
   // Present on the keyword-trigger thread: the DM the user sends to start it.
   inboundMessage?: string;
+  emailFirstMessage?: string;
 }) {
   const { t } = useI18n();
   return (
@@ -371,7 +376,24 @@ function DmScreen({
             </div>
           </div>
         )}
-        {openingDmEnabled && (
+        {emailFirstMessage !== undefined && (
+          <>
+            <div className="flex items-end gap-2">
+              <Avatar url={avatarUrl} size={24} />
+              <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-zinc-800 px-3 py-2">
+                <p className="whitespace-pre-wrap text-sm">
+                  {emailFirstMessage.replace(/\{username\}/g, SAMPLE_USER)}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <div className="rounded-2xl rounded-br-md bg-accent px-3 py-2 text-sm">
+                you@example.com
+              </div>
+            </div>
+          </>
+        )}
+        {openingDmEnabled && emailFirstMessage === undefined && (
           <>
             <div className="flex items-end gap-2">
               <Avatar url={avatarUrl} size={24} />
@@ -389,7 +411,7 @@ function DmScreen({
             </div>
           </>
         )}
-        {requireFollow && (
+        {requireFollow && emailFirstMessage === undefined && (
           <>
             <div className="flex items-end gap-2">
               <Avatar url={avatarUrl} size={24} />
@@ -535,6 +557,7 @@ export default function CampaignPreview(props: CampaignPreviewProps) {
             followUpMessage={props.followUpMessage}
             followUpDelayMinutes={props.followUpDelayMinutes}
             linkUrl={props.linkUrl}
+            emailFirstMessage={props.emailFirstMessage}
           />
         )}
         {activeTab === "dmTrigger" && (
@@ -558,6 +581,7 @@ export default function CampaignPreview(props: CampaignPreviewProps) {
             followUpDelayMinutes={props.followUpDelayMinutes}
             linkUrl={props.linkUrl}
             inboundMessage={props.sampleComment}
+            emailFirstMessage={props.emailFirstMessage}
           />
         )}
       </Phone>

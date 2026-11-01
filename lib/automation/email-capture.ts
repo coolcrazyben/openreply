@@ -3,6 +3,9 @@
 
 export const DEFAULT_EMAIL_CAPTURE_PROMPT =
   "Or just reply with your email and I'll send it straight to your inbox 📬";
+// The first DM when the campaign asks for the email up front.
+export const DEFAULT_EMAIL_FIRST_PROMPT =
+  "Hey {username}! Reply with your email and I'll send it straight to your inbox 📬";
 export const DEFAULT_EMAIL_CAPTURE_SUCCESS_MESSAGE =
   "You're in ✅ Check your inbox for the dataset, it should land in a minute.";
 export const DEFAULT_EMAIL_CAPTURE_INVALID_MESSAGE =
@@ -67,14 +70,37 @@ type PromptFields = {
   dmMessage: string;
   emailCaptureEnabled?: boolean | null;
   emailCapturePrompt?: string | null;
+  requireFollow?: boolean | null;
 };
 
 /**
+ * Whether the campaign's first DM asks for the email as a plain-text message,
+ * with no button: people type their address, and the link follows once it's
+ * captured. A follow-gated campaign keeps its button flow (the follow has to
+ * be confirmed by a tap), with the prompt appended to the link DM instead.
+ */
+export function asksForEmailFirst(
+  automation: Omit<PromptFields, "dmMessage">
+): boolean {
+  return Boolean(automation.emailCaptureEnabled) && !automation.requireFollow;
+}
+
+/** The first DM of an email-first campaign, before {username} is rendered. */
+export function emailFirstMessage(
+  automation: Pick<PromptFields, "emailCapturePrompt">
+): string {
+  return automation.emailCapturePrompt?.trim() || DEFAULT_EMAIL_FIRST_PROMPT;
+}
+
+/**
  * The campaign with the email-capture prompt appended to its link DM, so the
- * reveal offers "or just reply with your email". Unchanged when capture is off.
+ * reveal offers "or just reply with your email". Unchanged when capture is off
+ * or the email is asked for first.
  */
 export function withEmailCapturePrompt<T extends PromptFields>(automation: T): T {
-  if (!automation.emailCaptureEnabled) return automation;
+  if (!automation.emailCaptureEnabled || asksForEmailFirst(automation)) {
+    return automation;
+  }
   const prompt =
     automation.emailCapturePrompt?.trim() || DEFAULT_EMAIL_CAPTURE_PROMPT;
   return { ...automation, dmMessage: `${automation.dmMessage}\n\n${prompt}` };

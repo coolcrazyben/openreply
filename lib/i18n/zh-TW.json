@@ -475,5 +475,6 @@
   "Reply when there's no email in their message (sent once)": "訊息中沒有電子郵件時的回覆（只傳一次）",
   "Emails are subscribed to your beehiiv newsletter, which sends its welcome email. Needs BEEHIIV_API_KEY and BEEHIIV_PUBLICATION_ID on the worker. Only replies within 24 hours of this campaign's DM count.": "電子郵件會訂閱到你的 beehiiv 電子報，並由它寄出歡迎信。worker 需要設定 BEEHIIV_API_KEY 與 BEEHIIV_PUBLICATION_ID。只有在此活動私訊後 24 小時內的回覆才會計入。",
   "Email capture in the DM": "在私訊中收集電子郵件",
-  "People can reply with their email to subscribe to your newsletter.": "使用者可以回覆電子郵件來訂閱你的電子報。"
+  "People can reply with their email to subscribe to your newsletter.": "使用者可以回覆電子郵件來訂閱你的電子報。",
+  "Sent as the first DM, with no button. They type their email, then get the link.": "作為第一則私訊傳送，不附按鈕。對方輸入 email 後就會收到連結。"
 }
