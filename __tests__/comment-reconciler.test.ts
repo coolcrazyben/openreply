@@ -136,3 +136,23 @@ describe("comment polling does not recreate unsafe sends", () => {
     },
   );
 });
+
+describe("one sweep fetches each post's comments once per account", () => {
+  it("shares the comment read between campaigns on the same post", async () => {
+    const account = { id: "connection", instagramId: "owner", provider: "META", accessToken: "test" };
+    const campaign = (id: string) => ({
+      id, name: id, workspaceId: "workspace", postId: POST, matchAnyWord: false,
+      keywords: [id], publicReplyEnabled: true, instagramAccount: account,
+    });
+    readComments.mockReset().mockResolvedValue([]);
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.operationalEvent.create.mockResolvedValue({});
+    mockPrisma.automation.findMany.mockResolvedValue([campaign("A"), campaign("B"), campaign("C")]);
+
+    await reconcileComments();
+    expect(readComments).toHaveBeenCalledTimes(1);
+
+    await reconcileComments(); // a new pass reads fresh
+    expect(readComments).toHaveBeenCalledTimes(2);
+  });
+});
