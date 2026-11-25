@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PROTECTED_PREFIXES = ["/dashboard", "/automations", "/logs", "/settings"];
 
+// Cookie presence is not a live session (the DB may have dropped it), so /login is never
+// redirected from here: doing so looped with the dashboard's real session check.
 function hasSessionCookie(request: NextRequest): boolean {
   return (
     request.cookies.has("authjs.session-token") ||
@@ -16,17 +18,12 @@ export function proxy(request: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
-  const isLogin = pathname === "/login";
   const isAuthenticated = hasSessionCookie(request);
 
   if (isProtected && !isAuthenticated) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
-  }
-
-  if (isLogin && isAuthenticated) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   return NextResponse.next();
@@ -38,6 +35,5 @@ export const config = {
     "/automations/:path*",
     "/logs/:path*",
     "/settings/:path*",
-    "/login",
   ],
 };
